@@ -8,10 +8,9 @@ import (
 
 func NewRootCmd() (*cobra.Command, error) {
 	rootCmd := &cobra.Command{
-		Use:   "kubectl-rancher-migration",
-		Short: "kubectl-rancher-migration",
-		Long: `
-A very simple cli.`,
+		Use:          "kubectl-rancher-migration",
+		Short:        "kubectl-rancher-migration",
+		Long:         `Rancher migration tool.`,
 		SilenceUsage: true,
 	}
 
