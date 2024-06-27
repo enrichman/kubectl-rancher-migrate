@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"slices"
 
 	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
 	v1_10_0 "github.com/enrichman/kubectl-rancher-migration/pkg/migrations/v1_10_0"
@@ -69,9 +70,25 @@ func NewV1_10_0_MigrateCmd(c *client.RancherClient, lConn *client.LdapClient, ad
 		Long:         `v1.10.0 migration`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return v1_10_0.Migrate(c, lConn, adConfig)
+			return v1_10_0.Migrate(c, lConn, adConfig, args)
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			allUsers, err := v1_10_0.GetUsersToMigrate(c)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+
+			var suggestions []string
+			for _, u := range allUsers {
+				if !slices.Contains(args, u.User.Name) {
+					suggestions = append(suggestions, u.User.Name)
+				}
+			}
+
+			return suggestions, cobra.ShellCompDirectiveNoFileComp
 		},
 	}
+
 }
 
 func NewV1_10_0_RollbackCmd(c *client.RancherClient, lConn *client.LdapClient, adConfig *apiv3.ActiveDirectoryConfig) *cobra.Command {
@@ -82,6 +99,21 @@ func NewV1_10_0_RollbackCmd(c *client.RancherClient, lConn *client.LdapClient, a
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return v1_10_0.Rollback(c, lConn, adConfig)
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			allUsers, err := v1_10_0.GetMigratedUsers(c)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+
+			var suggestions []string
+			for _, u := range allUsers {
+				if !slices.Contains(args, u.User.Name) {
+					suggestions = append(suggestions, u.User.Name)
+				}
+			}
+
+			return suggestions, cobra.ShellCompDirectiveNoFileComp
 		},
 	}
 }

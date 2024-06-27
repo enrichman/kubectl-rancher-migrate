@@ -4,14 +4,21 @@ package version_1_10_0
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
+	"github.com/fatih/color"
 	ldapv3 "github.com/go-ldap/ldap/v3"
 	apiv3 "github.com/rancher/rancher/pkg/apis/management.cattle.io/v3"
 	ad "github.com/rancher/rancher/pkg/auth/providers/activedirectory"
 	"github.com/rancher/rancher/pkg/auth/providers/activedirectory/guid"
 	"github.com/rancher/rancher/pkg/auth/providers/common/ldap"
+)
+
+var (
+	green = color.New(color.FgGreen).SprintFunc()
+	red   = color.New(color.FgRed).SprintFunc()
 )
 
 type UserToMigrate struct {
@@ -23,7 +30,7 @@ type UserToMigrate struct {
 func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig) error {
 	fmt.Println("Check")
 
-	users, err := getUsersToMigrate(c)
+	users, err := GetUsersToMigrate(c)
 	if err != nil {
 		return err
 	}
@@ -41,15 +48,20 @@ func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.Acti
 	return nil
 }
 
-func Migrate(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig) error {
-	fmt.Println("Migrate")
+func Migrate(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig, userIDs []string) error {
+	fmt.Println("Start migration")
 
-	users, err := getUsersToMigrate(c)
+	users, err := GetUsersToMigrate(c)
 	if err != nil {
 		return err
 	}
 
 	for _, user := range users {
+		// if userIDs is not empty filter users to be migrated
+		if len(userIDs) > 0 && !slices.Contains(userIDs, user.User.Name) {
+			continue
+		}
+
 		fmt.Printf("Migrating user %q (%q)\n", user.User.DisplayName, user.User.Name)
 
 		if err := setGUID(lConn.Conn, config, user); err != nil {
@@ -63,7 +75,7 @@ func Migrate(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.Ac
 					ad.UserScope, ad.ObjectGUIDAttribute, user.GUID.UUID(),
 				)
 
-				fmt.Printf("updating %s -> %s\n", principalID, updatedPrincipalID)
+				fmt.Printf("\t%s\n\t%s\n", red(principalID), green(updatedPrincipalID))
 
 				user.User.PrincipalIDs[i] = updatedPrincipalID
 				break
@@ -81,15 +93,15 @@ func Migrate(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.Ac
 }
 
 func Rollback(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig) error {
-	fmt.Println("Rollback")
+	fmt.Println("Start rollback")
 
-	users, err := getMigratedUsers(c)
+	users, err := GetMigratedUsers(c)
 	if err != nil {
 		return err
 	}
 
 	for _, user := range users {
-		fmt.Printf("Rollbacking user %s\n", user.User.DisplayName)
+		fmt.Printf("Rolling back user %q (%q)\n", user.User.DisplayName, user.User.Name)
 
 		if err := setDN(lConn.Conn, config, user); err != nil {
 			return err
@@ -99,7 +111,7 @@ func Rollback(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.A
 			if strings.HasPrefix(principalID, ad.UserScope+"://") {
 				updatedPrincipalID := fmt.Sprintf("%s://%s", ad.UserScope, user.OriginalDN)
 
-				fmt.Printf("updating %s -> %s\n", principalID, updatedPrincipalID)
+				fmt.Printf("\t%s\n\t%s\n", red(principalID), green(updatedPrincipalID))
 
 				user.User.PrincipalIDs[i] = updatedPrincipalID
 				break
@@ -116,8 +128,8 @@ func Rollback(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.A
 	return nil
 }
 
-// getUsersToMigrate will fetch all the users with an old activedirectory PrincipalID
-func getUsersToMigrate(c *client.RancherClient) ([]*UserToMigrate, error) {
+// GetUsersToMigrate will fetch all the users with an old activedirectory PrincipalID
+func GetUsersToMigrate(c *client.RancherClient) ([]*UserToMigrate, error) {
 	users := &apiv3.UserList{}
 	err := c.Rancher.Get().Resource("users").Do(context.Background()).Into(users)
 	if err != nil {
@@ -160,7 +172,7 @@ func getUsersToMigrate(c *client.RancherClient) ([]*UserToMigrate, error) {
 	return usersToMigrate, nil
 }
 
-func getMigratedUsers(c *client.RancherClient) ([]*UserToMigrate, error) {
+func GetMigratedUsers(c *client.RancherClient) ([]*UserToMigrate, error) {
 	users := &apiv3.UserList{}
 	err := c.Rancher.Get().Resource("users").Do(context.Background()).Into(users)
 	if err != nil {
