@@ -98,7 +98,7 @@ func NewV1_10_0_RollbackCmd(c *client.RancherClient, lConn *client.LdapClient, a
 		Long:         `v1.10.0 rollback`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return v1_10_0.Rollback(c, lConn, adConfig)
+			return v1_10_0.Rollback(c, lConn, adConfig, args)
 		},
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			allUsers, err := v1_10_0.GetMigratedUsers(c)

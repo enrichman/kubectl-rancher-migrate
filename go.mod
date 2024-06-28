@@ -15,6 +15,7 @@ replace (
 )
 
 require (
+	github.com/fatih/color v1.16.0
 	github.com/go-ldap/ldap/v3 v3.4.1
 	github.com/rancher/rancher v0.0.0-20240624184603-4c90f01d884a
 	github.com/rancher/rancher/pkg/apis v0.0.0-20240529155832-64dbde013b4c
@@ -62,7 +63,6 @@ require (
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/evanphx/json-patch v5.7.0+incompatible // indirect
 	github.com/exponent-io/jsonpath v0.0.0-20210407135951-1de76d718b3f // indirect
-	github.com/fatih/color v1.16.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.3 // indirect

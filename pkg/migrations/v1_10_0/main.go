@@ -134,84 +134,27 @@ func Migrate(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.Ac
 		for _, prtb := range prtbs {
 			prtb.SetPrincipalName(updatedPrincipalID)
 
-			// generate a new PRTB
-			oldPRTBName := prtb.PRTB.Name
-			prtb.PRTB.Name = ""
-			prtb.PRTB.ResourceVersion = ""
-
-			fmt.Printf("\tCreating new ProjectRoleTemplateBinding in namespace %s\n", blue(prtb.PRTB.Namespace))
-
-			newPRTB := &apiv3.ProjectRoleTemplateBinding{}
-			err := c.Rancher.Post().Resource("projectroletemplatebindings").
-				Namespace(prtb.PRTB.Namespace).
-				Body(prtb.PRTB).
-				Do(context.Background()).
-				Into(newPRTB)
+			err = UpdatePRTB(c, prtb)
 			if err != nil {
 				return err
 			}
-
-			fmt.Printf(
-				"\tNew ProjectRoleTemplateBinding created (%s), deleting old one (%s)\n",
-				green(newPRTB.Name), red(oldPRTBName),
-			)
-
-			err = c.Rancher.Delete().Resource("projectroletemplatebindings").
-				Name(oldPRTBName).
-				Namespace(prtb.PRTB.Namespace).
-				Do(context.Background()).
-				Error()
-			if err != nil {
-				return err
-			}
-
-			fmt.Printf("\tOld ProjectRoleTemplateBinding deleted (%s)\n", red(oldPRTBName))
 		}
 
 		// update CRTBs
 		for _, crtb := range crtbs {
 			crtb.SetPrincipalName(updatedPrincipalID)
 
-			// generate a new CRTB
-			oldCRTBName := crtb.CRTB.Name
-			crtb.CRTB.Name = ""
-			crtb.CRTB.ResourceVersion = ""
-
-			fmt.Printf("\tCreating new ClusterRoleTemplateBinding in namespace %s\n", blue(crtb.CRTB.Namespace))
-
-			newCRTB := &apiv3.ClusterRoleTemplateBinding{}
-			err := c.Rancher.Post().Resource("clusterroletemplatebindings").
-				Namespace(crtb.CRTB.Namespace).
-				Body(crtb.CRTB).
-				Do(context.Background()).
-				Into(newCRTB)
+			err = UpdateCRTB(c, crtb)
 			if err != nil {
 				return err
 			}
-
-			fmt.Printf(
-				"\tNew ClusterRoleTemplateBinding created (%s), deleting old one (%s)\n",
-				green(newCRTB.Name),
-				red(oldCRTBName),
-			)
-
-			err = c.Rancher.Delete().Resource("clusterroletemplatebindings").
-				Name(oldCRTBName).
-				Namespace(crtb.CRTB.Namespace).
-				Do(context.Background()).
-				Error()
-			if err != nil {
-				return err
-			}
-
-			fmt.Printf("\tOld ClusterRoleTemplateBinding deleted (%s)\n", red(oldCRTBName))
 		}
 	}
 
 	return err
 }
 
-func Rollback(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig) error {
+func Rollback(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig, userIDs []string) error {
 	fmt.Println("Start rollback")
 
 	users, err := GetMigratedUsers(c)
@@ -220,27 +163,53 @@ func Rollback(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.A
 	}
 
 	for _, user := range users {
+		// if userIDs is not empty filter users to be migrated
+		if len(userIDs) > 0 && !slices.Contains(userIDs, user.User.Name) {
+			continue
+		}
+
 		fmt.Printf("Rolling back user %q (%q)\n", user.User.DisplayName, user.User.Name)
 
 		if err := setDN(lConn.Conn, config, user); err != nil {
 			return err
 		}
 
-		for i, principalID := range user.User.PrincipalIDs {
-			if strings.HasPrefix(principalID, ad.UserScope+"://") {
-				updatedPrincipalID := fmt.Sprintf("%s://%s", ad.UserScope, user.DN)
-
-				fmt.Printf("\t%s\n\t%s\n", red(principalID), green(updatedPrincipalID))
-
-				user.User.PrincipalIDs[i] = updatedPrincipalID
-				break
-			}
+		adPrincipalID, found := user.GetActiveDirectoryPrincipalID()
+		if !found {
+			// continue (not AD user)
+			continue
 		}
 
+		updatedPrincipalID := fmt.Sprintf("%s://%s", ad.UserScope, user.DN)
+		user.UpdatePrincipalID(adPrincipalID, updatedPrincipalID)
+
+		fmt.Printf("\t%s\n\t%s\n", red(adPrincipalID), green(updatedPrincipalID))
 		result := c.Rancher.Put().Resource("users").Name(user.User.Name).Body(user.User).Do(context.Background())
 		err = result.Error()
 		if err != nil {
 			return err
+		}
+
+		prtbs, crtbs := user.GetBindings()
+
+		// update PRTBs
+		for _, prtb := range prtbs {
+			prtb.SetPrincipalName(updatedPrincipalID)
+
+			err = UpdatePRTB(c, prtb)
+			if err != nil {
+				return err
+			}
+		}
+
+		// update CRTBs
+		for _, crtb := range crtbs {
+			crtb.SetPrincipalName(updatedPrincipalID)
+
+			err = UpdateCRTB(c, crtb)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -344,6 +313,30 @@ func GetMigratedUsers(c *client.RancherClient) ([]*UserToMigrate, error) {
 		}
 	}
 
+	userBindings, err := GetUserBindings(c)
+	if err != nil {
+		return nil, err
+	}
+
+	userResourcesMap := map[string][]PrincipalIDResource{}
+
+	// split resources for users
+	for _, binding := range userBindings {
+		key := binding.GetUserPrincipalName()
+		if _, found := userResourcesMap[key]; !found {
+			userResourcesMap[key] = []PrincipalIDResource{}
+		}
+		userResourcesMap[key] = append(userResourcesMap[key], binding)
+	}
+
+	// assign bindings to users
+	for _, u := range usersToMigrate {
+		principalID, _ := u.GetActiveDirectoryPrincipalID()
+		if _, found := userResourcesMap[principalID]; found {
+			u.Bindings = userResourcesMap[principalID]
+		}
+	}
+
 	return usersToMigrate, nil
 }
 
@@ -418,5 +411,78 @@ func setDN(lConn *ldapv3.Conn, config *apiv3.ActiveDirectoryConfig, user *UserTo
 	}
 
 	user.DN = results.Entries[0].DN
+	return nil
+}
+
+func UpdatePRTB(c *client.RancherClient, prtb *PRTBResource) error {
+	// generate a new PRTB
+	oldPRTBName := prtb.PRTB.Name
+	prtb.PRTB.Name = ""
+	prtb.PRTB.ResourceVersion = ""
+
+	fmt.Printf("\tCreating new ProjectRoleTemplateBinding in namespace %s\n", blue(prtb.PRTB.Namespace))
+
+	newPRTB := &apiv3.ProjectRoleTemplateBinding{}
+	err := c.Rancher.Post().Resource("projectroletemplatebindings").
+		Namespace(prtb.PRTB.Namespace).
+		Body(prtb.PRTB).
+		Do(context.Background()).
+		Into(newPRTB)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf(
+		"\tNew ProjectRoleTemplateBinding created (%s), deleting old one (%s)\n",
+		green(newPRTB.Name), red(oldPRTBName),
+	)
+
+	err = c.Rancher.Delete().Resource("projectroletemplatebindings").
+		Name(oldPRTBName).
+		Namespace(prtb.PRTB.Namespace).
+		Do(context.Background()).
+		Error()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\tOld ProjectRoleTemplateBinding deleted (%s)\n", red(oldPRTBName))
+	return nil
+}
+
+func UpdateCRTB(c *client.RancherClient, crtb *CRTBResource) error {
+	// generate a new CRTB
+	oldCRTBName := crtb.CRTB.Name
+	crtb.CRTB.Name = ""
+	crtb.CRTB.ResourceVersion = ""
+
+	fmt.Printf("\tCreating new ClusterRoleTemplateBinding in namespace %s\n", blue(crtb.CRTB.Namespace))
+
+	newCRTB := &apiv3.ClusterRoleTemplateBinding{}
+	err := c.Rancher.Post().Resource("clusterroletemplatebindings").
+		Namespace(crtb.CRTB.Namespace).
+		Body(crtb.CRTB).
+		Do(context.Background()).
+		Into(newCRTB)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf(
+		"\tNew ClusterRoleTemplateBinding created (%s), deleting old one (%s)\n",
+		green(newCRTB.Name),
+		red(oldCRTBName),
+	)
+
+	err = c.Rancher.Delete().Resource("clusterroletemplatebindings").
+		Name(oldCRTBName).
+		Namespace(crtb.CRTB.Namespace).
+		Do(context.Background()).
+		Error()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\tOld ClusterRoleTemplateBinding deleted (%s)\n", red(oldCRTBName))
 	return nil
 }
