@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"context"
+	"fmt"
 	"slices"
 
 	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
@@ -21,20 +21,20 @@ func NewV1_10_0_Cmd(c *client.RancherClient) (*cobra.Command, error) {
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			adConfig2 := &apiv3.ActiveDirectoryConfig{}
-			err := c.Rancher.Get().Resource("authconfigs").Name("activedirectory").Do(context.Background()).Into(adConfig2)
+			err := c.Rancher.Get().Resource("authconfigs").Name("activedirectory").Do(cmd.Context()).Into(adConfig2)
 			if err != nil {
-				return err
+				return fmt.Errorf("getting activedirectory authconfig: %w", err)
 			}
 			*adConfig = *adConfig2
 
 			ldapConfig, err := client.NewLDAPConfigFromActiveDirectory(c.Kube.CoreV1(), adConfig)
 			if err != nil {
-				return err
+				return fmt.Errorf("creating LDAPConfig from AD config: %w", err)
 			}
 
 			conn, err := client.NewLDAPConn(ldapConfig)
 			if err != nil {
-				return err
+				return fmt.Errorf("creating LDAPConn from LDAPConfig: %w", err)
 			}
 			*lConn = client.LdapClient{Conn: conn}
 

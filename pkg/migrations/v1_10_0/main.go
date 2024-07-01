@@ -22,47 +22,6 @@ var (
 	red   = color.New(color.FgRed).SprintFunc()
 )
 
-type UserToMigrate struct {
-	User     *apiv3.User
-	DN       string
-	GUID     guid.GUID
-	Bindings []PrincipalIDResource
-}
-
-func (u *UserToMigrate) GetActiveDirectoryPrincipalID() (string, bool) {
-	for _, principalID := range u.User.PrincipalIDs {
-		if strings.HasPrefix(principalID, ad.UserScope+"://") {
-			return principalID, true
-		}
-	}
-	return "", false
-}
-
-func (u *UserToMigrate) UpdatePrincipalID(orig, updated string) bool {
-	for i, principalID := range u.User.PrincipalIDs {
-		if orig == principalID {
-			u.User.PrincipalIDs[i] = updated
-			return true
-		}
-	}
-	return false
-}
-
-func (u *UserToMigrate) GetBindings() ([]*PRTBResource, []*CRTBResource) {
-	prtbs, crtsb := []*PRTBResource{}, []*CRTBResource{}
-
-	for _, binding := range u.Bindings {
-		switch b := binding.(type) {
-		case *PRTBResource:
-			prtbs = append(prtbs, b)
-		case *CRTBResource:
-			crtsb = append(crtsb, b)
-		}
-	}
-
-	return prtbs, crtsb
-}
-
 func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig) error {
 	fmt.Println("Check")
 
