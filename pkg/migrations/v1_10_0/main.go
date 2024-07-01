@@ -4,7 +4,6 @@ package version_1_10_0
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
@@ -25,22 +24,70 @@ var (
 func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig) error {
 	fmt.Println("Check")
 
-	users, err := GetUsersToMigrate(c)
+	migratable, err := GetMigratableResources(c, lConn.Conn, config)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Found %d users to migrate:\n", len(users))
+	fmt.Printf("Found %d users to migrate:\n", len(migratable))
 
-	for _, u := range users {
-		if err := setGUID(lConn.Conn, config, u); err != nil {
-			return err
+	for pID, res := range migratable {
+		fmt.Printf("- %s\n", blue(pID))
+		fmt.Printf("\tGUID:\t%s\n", green(res.GUID.UUID()))
+		fmt.Printf("\tDN:\t%s\n", red(res.DN))
+
+		var prtbs, crtbs int
+
+		for _, bind := range res.Bindings {
+			switch bind.(type) {
+			case *PRTBResource:
+				prtbs++
+			case *CRTBResource:
+				crtbs++
+			}
 		}
 
-		prtbs, crtbs := u.GetBindings()
+		fmt.Printf("\tPRTBs: %d, CRTBs: %d\n", prtbs, prtbs)
+	}
 
-		fmt.Printf("- %-15q %-20q - %-55s -> %s\n", u.User.Name, u.User.DisplayName, u.DN, u.GUID.UUID())
-		fmt.Printf("\tUser bindings: %d PRTB, %d CRTB\n", len(prtbs), len(crtbs))
+	fmt.Println("DNSSS")
+	for pID, res := range migratable.WithDNs() {
+		fmt.Printf("- %s\n", blue(pID))
+		fmt.Printf("\tGUID:\t%s\n", green(res.GUID.UUID()))
+		fmt.Printf("\tDN:\t%s\n", red(res.DN))
+
+		var prtbs, crtbs int
+
+		for _, bind := range res.Bindings {
+			switch bind.(type) {
+			case *PRTBResource:
+				prtbs++
+			case *CRTBResource:
+				crtbs++
+			}
+		}
+
+		fmt.Printf("\tPRTBs: %d, CRTBs: %d\n", prtbs, prtbs)
+	}
+
+	fmt.Println("GUIDSS")
+	for pID, res := range migratable.WithGUIDs() {
+		fmt.Printf("- %s\n", blue(pID))
+		fmt.Printf("\tGUID:\t%s\n", green(res.GUID.UUID()))
+		fmt.Printf("\tDN:\t%s\n", red(res.DN))
+
+		var prtbs, crtbs int
+
+		for _, bind := range res.Bindings {
+			switch bind.(type) {
+			case *PRTBResource:
+				prtbs++
+			case *CRTBResource:
+				crtbs++
+			}
+		}
+
+		fmt.Printf("\tPRTBs: %d, CRTBs: %d\n", prtbs, prtbs)
 	}
 
 	return nil
@@ -49,211 +96,80 @@ func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.Acti
 func Migrate(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig, userIDs []string) error {
 	fmt.Println("Start migration")
 
-	users, err := GetUsersToMigrate(c)
+	migratable, err := GetMigratableResources(c, lConn.Conn, config)
 	if err != nil {
 		return err
 	}
+	dnResources := migratable.WithDNs()
 
-	for _, user := range users {
-		// if userIDs is not empty filter users to be migrated
-		if len(userIDs) > 0 && !slices.Contains(userIDs, user.User.Name) {
-			continue
-		}
-
-		fmt.Printf("Migrating user %q (%q)\n", user.User.DisplayName, user.User.Name)
-
-		if err := setGUID(lConn.Conn, config, user); err != nil {
-			return err
-		}
-
-		adPrincipalID, found := user.GetActiveDirectoryPrincipalID()
-		if !found {
-			// continue (not AD user)
-			continue
-		}
-
-		updatedPrincipalID := fmt.Sprintf(
-			"%s://%s=%s",
-			ad.UserScope, ad.ObjectGUIDAttribute, user.GUID.UUID(),
-		)
-
-		// updating user principal
-		fmt.Printf("\t%s\n\t%s\n", red(adPrincipalID), green(updatedPrincipalID))
-		user.UpdatePrincipalID(adPrincipalID, updatedPrincipalID)
-
-		result := c.Rancher.Put().Resource("users").Name(user.User.Name).Body(user.User).Do(context.Background())
-		err = result.Error()
-		if err != nil {
-			return err
-		}
-
-		prtbs, crtbs := user.GetBindings()
-
-		// update PRTBs
-		for _, prtb := range prtbs {
-			prtb.SetPrincipalName(updatedPrincipalID)
-
-			err = UpdatePRTB(c, prtb)
-			if err != nil {
-				return err
-			}
-		}
-
-		// update CRTBs
-		for _, crtb := range crtbs {
-			crtb.SetPrincipalName(updatedPrincipalID)
-
-			err = UpdateCRTB(c, crtb)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return err
+	return updateResources(c, dnResources)
 }
 
 func Rollback(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig, userIDs []string) error {
 	fmt.Println("Start rollback")
 
-	users, err := GetMigratedUsers(c)
+	migratable, err := GetMigratableResources(c, lConn.Conn, config)
 	if err != nil {
 		return err
 	}
+	guidResources := migratable.WithGUIDs()
 
-	for _, user := range users {
-		// if userIDs is not empty filter users to be migrated
-		if len(userIDs) > 0 && !slices.Contains(userIDs, user.User.Name) {
-			continue
+	return updateResources(c, guidResources)
+}
+
+// GetMigratableResources
+func GetMigratableResources(c *client.RancherClient, lConn *ldapv3.Conn, config *apiv3.ActiveDirectoryConfig) (MigratableResources, error) {
+	resourcesToMigrate := map[string]*MigratableResource{}
+
+	userMap, err := GetUsersToMigrate(c)
+	if err != nil {
+		return nil, err
+	}
+
+	for principalID, user := range userMap {
+		res := &MigratableResource{
+			PrincipalID: principalID,
+			User:        user,
 		}
 
-		fmt.Printf("Rolling back user %q (%q)\n", user.User.DisplayName, user.User.Name)
+		objectGUIDPrincipalPrefix := fmt.Sprintf("%s://%s=", ad.UserScope, ad.ObjectGUIDAttribute)
+		if strings.HasPrefix(principalID, objectGUIDPrincipalPrefix) {
+			objectGUID := strings.TrimPrefix(principalID, objectGUIDPrincipalPrefix)
 
-		if err := setDN(lConn.Conn, config, user); err != nil {
-			return err
+			parsedGUID, err := guid.Parse(objectGUID)
+			if err != nil {
+				return nil, err
+			}
+
+			res.GUID = parsedGUID
+			res.DN, err = getDN(lConn, config, parsedGUID)
+			if err != nil {
+				return nil, err
+			}
+
+		} else {
+			res.DN = strings.TrimPrefix(principalID, ad.UserScope+"://")
+			res.GUID, err = getGUID(lConn, config, res.DN)
+			if err != nil {
+				return nil, err
+			}
 		}
 
-		adPrincipalID, found := user.GetActiveDirectoryPrincipalID()
+		resourcesToMigrate[principalID] = res
+	}
+
+	bindingsMap, err := GetUserBindings(c)
+	if err != nil {
+		return nil, err
+	}
+
+	for principalID, binds := range bindingsMap {
+		// check if principalID alrteady exists in map, otherwise this resource is "orphaned"
+		res, found := resourcesToMigrate[principalID]
 		if !found {
-			// continue (not AD user)
-			continue
-		}
-
-		updatedPrincipalID := fmt.Sprintf("%s://%s", ad.UserScope, user.DN)
-		user.UpdatePrincipalID(adPrincipalID, updatedPrincipalID)
-
-		fmt.Printf("\t%s\n\t%s\n", red(adPrincipalID), green(updatedPrincipalID))
-		result := c.Rancher.Put().Resource("users").Name(user.User.Name).Body(user.User).Do(context.Background())
-		err = result.Error()
-		if err != nil {
-			return err
-		}
-
-		prtbs, crtbs := user.GetBindings()
-
-		// update PRTBs
-		for _, prtb := range prtbs {
-			prtb.SetPrincipalName(updatedPrincipalID)
-
-			err = UpdatePRTB(c, prtb)
-			if err != nil {
-				return err
+			res = &MigratableResource{
+				PrincipalID: principalID,
 			}
-		}
-
-		// update CRTBs
-		for _, crtb := range crtbs {
-			crtb.SetPrincipalName(updatedPrincipalID)
-
-			err = UpdateCRTB(c, crtb)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// GetUsersToMigrate will fetch all the users with an old activedirectory PrincipalID
-func GetUsersToMigrate(c *client.RancherClient) ([]*UserToMigrate, error) {
-	users := &apiv3.UserList{}
-	err := c.Rancher.Get().Resource("users").Do(context.Background()).Into(users)
-	if err != nil {
-		return nil, err
-	}
-
-	usersToMigrate := []*UserToMigrate{}
-
-	for _, user := range users.Items {
-		for _, principalID := range user.PrincipalIDs {
-			if strings.HasPrefix(principalID, ad.UserScope+"://") {
-				userDN := strings.TrimPrefix(principalID, ad.UserScope+"://")
-
-				parsedDN, err := ldapv3.ParseDN(userDN)
-				if err != nil {
-					return nil, err
-				}
-
-				// validate DN
-				var foundDN bool
-				for _, attr := range parsedDN.RDNs[0].Attributes {
-					if attr.Type == "CN" {
-						foundDN = true
-						break
-					}
-				}
-
-				if !foundDN {
-					continue
-				}
-
-				usersToMigrate = append(usersToMigrate, &UserToMigrate{
-					User: &user,
-					DN:   userDN,
-				})
-			}
-		}
-	}
-
-	userBindings, err := GetUserBindings(c)
-	if err != nil {
-		return nil, err
-	}
-
-	userResourcesMap := map[string][]PrincipalIDResource{}
-
-	// split resources for users
-	for _, binding := range userBindings {
-		key := binding.GetUserPrincipalName()
-		if _, found := userResourcesMap[key]; !found {
-			userResourcesMap[key] = []PrincipalIDResource{}
-		}
-		userResourcesMap[key] = append(userResourcesMap[key], binding)
-	}
-
-	// assign bindings to users
-	for _, u := range usersToMigrate {
-		principalID, _ := u.GetActiveDirectoryPrincipalID()
-		if _, found := userResourcesMap[principalID]; found {
-			u.Bindings = userResourcesMap[principalID]
-		}
-	}
-
-	return usersToMigrate, nil
-}
-
-func GetMigratedUsers(c *client.RancherClient) ([]*UserToMigrate, error) {
-	users := &apiv3.UserList{}
-	err := c.Rancher.Get().Resource("users").Do(context.Background()).Into(users)
-	if err != nil {
-		return nil, err
-	}
-
-	usersToMigrate := []*UserToMigrate{}
-
-	for _, user := range users.Items {
-		for _, principalID := range user.PrincipalIDs {
 
 			objectGUIDPrincipalPrefix := fmt.Sprintf("%s://%s=", ad.UserScope, ad.ObjectGUIDAttribute)
 			if strings.HasPrefix(principalID, objectGUIDPrincipalPrefix) {
@@ -264,43 +180,44 @@ func GetMigratedUsers(c *client.RancherClient) ([]*UserToMigrate, error) {
 					return nil, err
 				}
 
-				usersToMigrate = append(usersToMigrate, &UserToMigrate{
-					User: &user,
-					GUID: parsedGUID,
-				})
+				res.GUID = parsedGUID
+			} else {
+				dn := strings.TrimPrefix(principalID, ad.UserScope+"://")
+				res.DN = dn
 			}
 		}
+
+		res.Bindings = binds
+
+		resourcesToMigrate[principalID] = res
 	}
 
-	userBindings, err := GetUserBindings(c)
+	return resourcesToMigrate, nil
+}
+
+// GetUsersToMigrate will fetch all the users with an old activedirectory PrincipalID
+func GetUsersToMigrate(c *client.RancherClient) (map[string]*apiv3.User, error) {
+	users := &apiv3.UserList{}
+	err := c.Rancher.Get().Resource("users").Do(context.Background()).Into(users)
 	if err != nil {
 		return nil, err
 	}
 
-	userResourcesMap := map[string][]PrincipalIDResource{}
+	migratableUsers := map[string]*apiv3.User{}
 
-	// split resources for users
-	for _, binding := range userBindings {
-		key := binding.GetUserPrincipalName()
-		if _, found := userResourcesMap[key]; !found {
-			userResourcesMap[key] = []PrincipalIDResource{}
-		}
-		userResourcesMap[key] = append(userResourcesMap[key], binding)
-	}
-
-	// assign bindings to users
-	for _, u := range usersToMigrate {
-		principalID, _ := u.GetActiveDirectoryPrincipalID()
-		if _, found := userResourcesMap[principalID]; found {
-			u.Bindings = userResourcesMap[principalID]
+	for _, user := range users.Items {
+		for _, principalID := range user.PrincipalIDs {
+			if strings.HasPrefix(principalID, ad.UserScope+"://") {
+				migratableUsers[principalID] = &user
+			}
 		}
 	}
 
-	return usersToMigrate, nil
+	return migratableUsers, nil
 }
 
-func GetUserBindings(c *client.RancherClient) ([]PrincipalIDResource, error) {
-	userBindings := []PrincipalIDResource{}
+func GetUserBindings(c *client.RancherClient) (map[string][]PrincipalIDResource, error) {
+	userBindings := map[string][]PrincipalIDResource{}
 
 	prtbs := &apiv3.ProjectRoleTemplateBindingList{}
 	err := c.Rancher.Get().Resource("projectroletemplatebindings").Do(context.Background()).Into(prtbs)
@@ -309,9 +226,16 @@ func GetUserBindings(c *client.RancherClient) ([]PrincipalIDResource, error) {
 	}
 
 	for _, prtb := range prtbs.Items {
-		userBindings = append(userBindings, &PRTBResource{
-			PRTB: &prtb,
-		})
+		if strings.HasPrefix(prtb.UserPrincipalName, ad.UserScope+"://") {
+			bindings, found := userBindings[prtb.UserPrincipalName]
+			if !found {
+				bindings = []PrincipalIDResource{}
+			}
+
+			userBindings[prtb.UserPrincipalName] = append(bindings, &PRTBResource{
+				PRTB: &prtb,
+			})
+		}
 	}
 
 	crtbs := &apiv3.ClusterRoleTemplateBindingList{}
@@ -321,41 +245,47 @@ func GetUserBindings(c *client.RancherClient) ([]PrincipalIDResource, error) {
 	}
 
 	for _, crtb := range crtbs.Items {
-		userBindings = append(userBindings, &CRTBResource{
-			CRTB: &crtb,
-		})
+		if strings.HasPrefix(crtb.UserPrincipalName, ad.UserScope+"://") {
+			bindings, found := userBindings[crtb.UserPrincipalName]
+			if !found {
+				bindings = []PrincipalIDResource{}
+			}
+
+			userBindings[crtb.UserPrincipalName] = append(bindings, &CRTBResource{
+				CRTB: &crtb,
+			})
+		}
 	}
 
 	return userBindings, nil
 }
 
-func setGUID(lConn *ldapv3.Conn, config *apiv3.ActiveDirectoryConfig, user *UserToMigrate) error {
+func getGUID(lConn *ldapv3.Conn, config *apiv3.ActiveDirectoryConfig, dn string) (guid.GUID, error) {
 	search := ldap.NewBaseObjectSearchRequest(
-		user.DN,
+		dn,
 		fmt.Sprintf("(%v=%v)", ad.ObjectClass, config.UserObjectClass),
 		config.GetUserSearchAttributes(ad.MemberOfAttribute, ad.ObjectClass, "objectGUID"),
 	)
 
 	results, err := lConn.Search(search)
 	if err != nil {
-		return fmt.Errorf("LDAP search of user by objectGUID failed: %w", err)
+		return nil, fmt.Errorf("LDAP search of user by objectGUID failed: %w", err)
 	}
 
 	objectGUID := results.Entries[0].GetRawAttributeValue("objectGUID")
 	parsedGuid, err := guid.New(objectGUID)
 	if err != nil {
-		return fmt.Errorf("LDAP search of user by objectGUID failed: %w", err)
+		return nil, fmt.Errorf("LDAP search of user by objectGUID failed: %w", err)
 	}
 
-	user.GUID = parsedGuid
-	return nil
+	return parsedGuid, nil
 }
 
-func setDN(lConn *ldapv3.Conn, config *apiv3.ActiveDirectoryConfig, user *UserToMigrate) error {
+func getDN(lConn *ldapv3.Conn, config *apiv3.ActiveDirectoryConfig, uuid guid.GUID) (string, error) {
 	filter := fmt.Sprintf(
 		"(&(%v=%v)(%s=%s))",
 		ad.ObjectClass, config.UserObjectClass,
-		ad.ObjectGUIDAttribute, guid.Escape(user.GUID),
+		ad.ObjectGUIDAttribute, guid.Escape(uuid),
 	)
 
 	search := ldap.NewWholeSubtreeSearchRequest(
@@ -366,11 +296,10 @@ func setDN(lConn *ldapv3.Conn, config *apiv3.ActiveDirectoryConfig, user *UserTo
 
 	results, err := lConn.Search(search)
 	if err != nil {
-		return fmt.Errorf("LDAP search of user by objectGUID failed: %w", err)
+		return "", fmt.Errorf("LDAP search of user by objectGUID failed: %w", err)
 	}
 
-	user.DN = results.Entries[0].DN
-	return nil
+	return results.Entries[0].DN, nil
 }
 
 func UpdatePRTB(c *client.RancherClient, prtb *PRTBResource) error {
@@ -443,5 +372,50 @@ func UpdateCRTB(c *client.RancherClient, crtb *CRTBResource) error {
 	}
 
 	fmt.Printf("\tOld ClusterRoleTemplateBinding deleted (%s)\n", red(oldCRTBName))
+	return nil
+}
+
+func updateResources(c *client.RancherClient, resources []*MigratableResource) error {
+	var err error
+
+	for _, res := range resources {
+
+		updatedPrincipalID := res.GetNewPrincipalID()
+		fmt.Printf("\t%s\n\t%s\n", red(res.PrincipalID), green(updatedPrincipalID))
+
+		// updating user principal
+		if res.User != nil {
+			res.UpdatePrincipalID(updatedPrincipalID)
+
+			result := c.Rancher.Put().Resource("users").Name(res.User.Name).Body(res.User).Do(context.Background())
+			err = result.Error()
+			if err != nil {
+				return err
+			}
+		}
+
+		for _, bind := range res.Bindings {
+			switch b := bind.(type) {
+			case *PRTBResource:
+				// update PRTB
+				b.SetPrincipalName(updatedPrincipalID)
+
+				err = UpdatePRTB(c, b)
+				if err != nil {
+					return err
+				}
+
+			case *CRTBResource:
+				// update PRTB
+				b.SetPrincipalName(updatedPrincipalID)
+
+				err = UpdateCRTB(c, b)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	return nil
 }

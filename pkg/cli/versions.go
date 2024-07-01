@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
 	v1_10_0 "github.com/enrichman/kubectl-rancher-migration/pkg/migrations/v1_10_0"
@@ -73,17 +72,17 @@ func NewV1_10_0_MigrateCmd(c *client.RancherClient, lConn *client.LdapClient, ad
 			return v1_10_0.Migrate(c, lConn, adConfig, args)
 		},
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			allUsers, err := v1_10_0.GetUsersToMigrate(c)
+			_, err := v1_10_0.GetUsersToMigrate(c)
 			if err != nil {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 
 			var suggestions []string
-			for _, u := range allUsers {
-				if !slices.Contains(args, u.User.Name) {
-					suggestions = append(suggestions, u.User.Name)
-				}
-			}
+			// for _, u := range allUsers {
+			// 	if !slices.Contains(args, u.User.Name) {
+			// 		suggestions = append(suggestions, u.User.Name)
+			// 	}
+			// }
 
 			return suggestions, cobra.ShellCompDirectiveNoFileComp
 		},
@@ -101,17 +100,17 @@ func NewV1_10_0_RollbackCmd(c *client.RancherClient, lConn *client.LdapClient, a
 			return v1_10_0.Rollback(c, lConn, adConfig, args)
 		},
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			allUsers, err := v1_10_0.GetMigratedUsers(c)
-			if err != nil {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			}
+			// _, err := v1_10_0.GetMigratedUsers(c)
+			// if err != nil {
+			// 	return nil, cobra.ShellCompDirectiveNoFileComp
+			// }
 
 			var suggestions []string
-			for _, u := range allUsers {
-				if !slices.Contains(args, u.User.Name) {
-					suggestions = append(suggestions, u.User.Name)
-				}
-			}
+			// for _, u := range allUsers {
+			// 	if !slices.Contains(args, u.User.Name) {
+			// 		suggestions = append(suggestions, u.User.Name)
+			// 	}
+			// }
 
 			return suggestions, cobra.ShellCompDirectiveNoFileComp
 		},

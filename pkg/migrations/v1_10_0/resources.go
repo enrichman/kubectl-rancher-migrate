@@ -1,6 +1,8 @@
 package version_1_10_0
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 
 	apiv3 "github.com/rancher/rancher/pkg/apis/management.cattle.io/v3"
@@ -37,14 +39,49 @@ func (c *PRTBResource) SetPrincipalName(principalName string) {
 	c.PRTB.UserPrincipalName = principalName
 }
 
-type UserToMigrate struct {
-	User     *apiv3.User
-	DN       string
-	GUID     guid.GUID
-	Bindings []PrincipalIDResource
+type MigratableResources map[string]*MigratableResource
+
+func (u MigratableResources) WithDNs() []*MigratableResource {
+	var dns []*MigratableResource
+
+	for k, v := range u {
+		if !strings.Contains(k, ad.ObjectGUIDAttribute) {
+			dns = append(dns, v)
+		}
+	}
+
+	slices.SortFunc(dns, func(v1, v2 *MigratableResource) int {
+		return strings.Compare(v1.DN, v2.DN)
+	})
+
+	return dns
 }
 
-func (u *UserToMigrate) GetActiveDirectoryPrincipalID() (string, bool) {
+func (u MigratableResources) WithGUIDs() []*MigratableResource {
+	var uuids []*MigratableResource
+
+	for k, v := range u {
+		if strings.Contains(k, ad.ObjectGUIDAttribute) {
+			uuids = append(uuids, v)
+		}
+	}
+
+	slices.SortFunc(uuids, func(v1, v2 *MigratableResource) int {
+		return strings.Compare(v1.GUID.String(), v2.GUID.String())
+	})
+
+	return uuids
+}
+
+type MigratableResource struct {
+	User        *apiv3.User
+	PrincipalID string
+	DN          string
+	GUID        guid.GUID
+	Bindings    []PrincipalIDResource
+}
+
+func (u *MigratableResource) GetActiveDirectoryPrincipalID() (string, bool) {
 	for _, principalID := range u.User.PrincipalIDs {
 		if strings.HasPrefix(principalID, ad.UserScope+"://") {
 			return principalID, true
@@ -53,9 +90,20 @@ func (u *UserToMigrate) GetActiveDirectoryPrincipalID() (string, bool) {
 	return "", false
 }
 
-func (u *UserToMigrate) UpdatePrincipalID(orig, updated string) bool {
+func (u *MigratableResource) GetNewPrincipalID() string {
+	if !strings.Contains(u.PrincipalID, ad.ObjectGUIDAttribute) {
+		return fmt.Sprintf(
+			"%s://%s=%s",
+			ad.UserScope, ad.ObjectGUIDAttribute, u.GUID.UUID(),
+		)
+	}
+
+	return fmt.Sprintf("%s://%s", ad.UserScope, u.DN)
+}
+
+func (u *MigratableResource) UpdatePrincipalID(updated string) bool {
 	for i, principalID := range u.User.PrincipalIDs {
-		if orig == principalID {
+		if u.PrincipalID == principalID {
 			u.User.PrincipalIDs[i] = updated
 			return true
 		}
@@ -63,7 +111,7 @@ func (u *UserToMigrate) UpdatePrincipalID(orig, updated string) bool {
 	return false
 }
 
-func (u *UserToMigrate) GetBindings() ([]*PRTBResource, []*CRTBResource) {
+func (u *MigratableResource) GetBindings() ([]*PRTBResource, []*CRTBResource) {
 	prtbs, crtsb := []*PRTBResource{}, []*CRTBResource{}
 
 	for _, binding := range u.Bindings {
