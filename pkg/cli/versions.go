@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
 	v1_10_0 "github.com/enrichman/kubectl-rancher-migration/pkg/migrations/v1_10_0"
@@ -72,17 +73,34 @@ func NewV1_10_0_MigrateCmd(c *client.RancherClient, lConn *client.LdapClient, ad
 			return v1_10_0.Migrate(c, lConn, adConfig, args)
 		},
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			_, err := v1_10_0.GetUsersToMigrate(c)
+			adConfig := &apiv3.ActiveDirectoryConfig{}
+			err := c.Rancher.Get().Resource("authconfigs").Name("activedirectory").Do(cmd.Context()).Into(adConfig)
 			if err != nil {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 
+			ldapConfig, err := client.NewLDAPConfigFromActiveDirectory(c.Kube.CoreV1(), adConfig)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+
+			conn, err := client.NewLDAPConn(ldapConfig)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+
+			migratableResources, err := v1_10_0.GetMigratableResources(c, conn, adConfig)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			dnResources := migratableResources.WithDNs()
+
 			var suggestions []string
-			// for _, u := range allUsers {
-			// 	if !slices.Contains(args, u.User.Name) {
-			// 		suggestions = append(suggestions, u.User.Name)
-			// 	}
-			// }
+			for _, res := range dnResources {
+				if !slices.Contains(args, res.PrincipalID) {
+					suggestions = append(suggestions, res.PrincipalID)
+				}
+			}
 
 			return suggestions, cobra.ShellCompDirectiveNoFileComp
 		},
@@ -100,17 +118,34 @@ func NewV1_10_0_RollbackCmd(c *client.RancherClient, lConn *client.LdapClient, a
 			return v1_10_0.Rollback(c, lConn, adConfig, args)
 		},
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			// _, err := v1_10_0.GetMigratedUsers(c)
-			// if err != nil {
-			// 	return nil, cobra.ShellCompDirectiveNoFileComp
-			// }
+			adConfig := &apiv3.ActiveDirectoryConfig{}
+			err := c.Rancher.Get().Resource("authconfigs").Name("activedirectory").Do(cmd.Context()).Into(adConfig)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+
+			ldapConfig, err := client.NewLDAPConfigFromActiveDirectory(c.Kube.CoreV1(), adConfig)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+
+			conn, err := client.NewLDAPConn(ldapConfig)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+
+			migratableResources, err := v1_10_0.GetMigratableResources(c, conn, adConfig)
+			if err != nil {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			guidResources := migratableResources.WithGUIDs()
 
 			var suggestions []string
-			// for _, u := range allUsers {
-			// 	if !slices.Contains(args, u.User.Name) {
-			// 		suggestions = append(suggestions, u.User.Name)
-			// 	}
-			// }
+			for _, res := range guidResources {
+				if !slices.Contains(args, res.PrincipalID) {
+					suggestions = append(suggestions, res.PrincipalID)
+				}
+			}
 
 			return suggestions, cobra.ShellCompDirectiveNoFileComp
 		},
