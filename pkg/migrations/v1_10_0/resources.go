@@ -1,7 +1,6 @@
 package version_1_10_0
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -37,6 +36,18 @@ func (c *PRTBResource) GetUserPrincipalName() string {
 
 func (c *PRTBResource) SetPrincipalName(principalName string) {
 	c.PRTB.UserPrincipalName = principalName
+}
+
+type TokenResource struct {
+	Token *apiv3.Token
+}
+
+func (t *TokenResource) GetUserPrincipalName() string {
+	return t.Token.UserPrincipal.Name
+}
+
+func (t *TokenResource) SetPrincipalName(principalName string) {
+	t.Token.UserPrincipal.Name = principalName
 }
 
 type MigratableResources map[string]*MigratableResource
@@ -81,26 +92,6 @@ type MigratableResource struct {
 	Bindings    []PrincipalIDResource
 }
 
-func (u *MigratableResource) GetActiveDirectoryPrincipalID() (string, bool) {
-	for _, principalID := range u.User.PrincipalIDs {
-		if strings.HasPrefix(principalID, ad.UserScope+"://") {
-			return principalID, true
-		}
-	}
-	return "", false
-}
-
-func (u *MigratableResource) GetNewPrincipalID() string {
-	if !strings.Contains(u.PrincipalID, ad.ObjectGUIDAttribute) {
-		return fmt.Sprintf(
-			"%s://%s=%s",
-			ad.UserScope, ad.ObjectGUIDAttribute, u.GUID.UUID(),
-		)
-	}
-
-	return fmt.Sprintf("%s://%s", ad.UserScope, u.DN)
-}
-
 func (u *MigratableResource) UpdatePrincipalID(updated string) bool {
 	for i, principalID := range u.User.PrincipalIDs {
 		if u.PrincipalID == principalID {
@@ -124,4 +115,16 @@ func (u *MigratableResource) GetBindings() ([]*PRTBResource, []*CRTBResource) {
 	}
 
 	return prtbs, crtsb
+}
+
+func GetResourceByType[T PrincipalIDResource](resources []PrincipalIDResource) []T {
+	var filtered []T
+
+	for _, res := range resources {
+		if t, ok := res.(T); ok {
+			filtered = append(filtered, t)
+		}
+	}
+
+	return filtered
 }
