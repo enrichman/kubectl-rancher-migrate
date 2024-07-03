@@ -23,7 +23,7 @@ var (
 )
 
 func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.ActiveDirectoryConfig) error {
-	fmt.Println("Check")
+	fmt.Println("Checking resources")
 
 	migratable, err := GetMigratableResources(c, lConn.Conn, config)
 	if err != nil {
@@ -38,10 +38,16 @@ func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.Acti
 		len(migratable), len(dnResources), len(guidResources),
 	)
 
-	fmt.Println("DN resources:")
+	fmt.Println("# Resources with DNs")
 	for i, res := range dnResources {
 		fmt.Printf("%00d) %s\n", i+1, blue(res.PrincipalID))
 		fmt.Printf("\tGUID:\t%s\n", green(res.GUID.UUID()))
+
+		if res.User == nil {
+			fmt.Println("\tUser not found")
+		} else {
+			fmt.Printf("\tUser %s (%s)\n", yellow(res.User.Name), blue(res.User.DisplayName))
+		}
 
 		prtbs := GetResourceByType[*PRTBResource](res.Bindings)
 		fmt.Printf("\tProjectRoleTemplateBindings (%d)\n", len(prtbs))
@@ -62,10 +68,16 @@ func Check(c *client.RancherClient, lConn *client.LdapClient, config *apiv3.Acti
 		}
 	}
 
-	fmt.Println("GUID resources:")
+	fmt.Println("\n# Resources with GUIDs")
 	for i, res := range guidResources {
 		fmt.Printf("%00d) %s\n", i+1, blue(res.PrincipalID))
 		fmt.Printf("\tDN:\t%s\n", green(res.DN))
+
+		if res.User == nil {
+			fmt.Println("\tUser not found")
+		} else {
+			fmt.Printf("\tUser %s (%s)\n", yellow(res.User.Name), blue(res.User.DisplayName))
+		}
 
 		prtbs := GetResourceByType[*PRTBResource](res.Bindings)
 		fmt.Printf("\tProjectRoleTemplateBindings (%d)\n", len(prtbs))
@@ -384,7 +396,7 @@ func UpdateResources(c *client.RancherClient, resources []*MigratableResource) e
 		if len(tokens) == 0 {
 			fmt.Println("- No Tokens to update.")
 		} else {
-			fmt.Printf("- Updating %d Tokens\n", len(crtbs))
+			fmt.Printf("- Updating %d Tokens\n", len(tokens))
 
 			for _, token := range tokens {
 				// update Token
