@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
+	"github.com/enrichman/kubectl-rancher_migrate/pkg/client"
 	"github.com/fatih/color"
 	ldapv3 "github.com/go-ldap/ldap/v3"
 	apiv3 "github.com/rancher/rancher/pkg/apis/management.cattle.io/v3"

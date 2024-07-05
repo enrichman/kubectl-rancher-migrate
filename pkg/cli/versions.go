@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
-	v1_10_0 "github.com/enrichman/kubectl-rancher-migration/pkg/migrations/v1_10_0"
+	"github.com/enrichman/kubectl-rancher_migrate/pkg/client"
+	v1_10_0 "github.com/enrichman/kubectl-rancher_migrate/pkg/migrations/v1_10_0"
 	apiv3 "github.com/rancher/rancher/pkg/apis/management.cattle.io/v3"
 	"github.com/spf13/cobra"
 )

@@ -1,4 +1,4 @@
-module github.com/enrichman/kubectl-rancher-migration
+module github.com/enrichman/kubectl-rancher_migrate
 
 go 1.22.0
 

@@ -1,1 +1,1 @@
-# kubectl-rancher-migration
+# kubectl-rancher_migrate

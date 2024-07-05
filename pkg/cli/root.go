@@ -1,15 +1,15 @@
 package cli
 
 import (
-	"github.com/enrichman/kubectl-rancher-migration/pkg/client"
+	"github.com/enrichman/kubectl-rancher_migrate/pkg/client"
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
 func NewRootCmd() (*cobra.Command, error) {
 	rootCmd := &cobra.Command{
-		Use:          "kubectl-rancher-migration",
-		Short:        "kubectl-rancher-migration",
+		Use:          "kubectl-rancher_migrate",
+		Short:        "kubectl-rancher_migrate",
 		Long:         `Rancher migration tool.`,
 		SilenceUsage: true,
 	}

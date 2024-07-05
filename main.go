@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	cli "github.com/enrichman/kubectl-rancher-migration/pkg/cli"
+	cli "github.com/enrichman/kubectl-rancher_migrate/pkg/cli"
 )
 
 func main() {
